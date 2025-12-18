@@ -1,0 +1,10 @@
+privilege_type,privilege_name,privilege_description,privilege_score
+scp,EntitlementManagement.ReadWrite.All,EntitlementManagement.ReadWrite.All,5
+scp,EntitlementManagement.Read.All,EntitlementManagement.Read.All,5
+scp,AccessReview.ReadWrite.Membership,AccessReview.ReadWrite.Membership,5
+scp,AccessReview.ReadWrite.All,AccessReview.ReadWrite.All,5
+scp,AccessReview.Read.All,AccessReview.Read.All,5
+scp,Policy.Read.All,Policy.Read.All,5
+scp,Policy.ReadWrite.AccessReview,Policy.ReadWrite.AccessReview,5
+scp,Files.Read,Files.Read,5
+scp,Files.Read.All,"Files.Read.All, Files.ReadWrite, Files.ReadWrite.All, Sites.Read.All, Sites.ReadWrite.All",5
