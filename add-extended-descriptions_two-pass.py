@@ -12,10 +12,15 @@ import csv
 import io
 from tqdm import tqdm   # optional but nice progress bar
 
-#OLLAMA_URL = "http://ollamaserver_nuc1:11434/api/generate"
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://ollamaserver_nuc1:11434/api/generate"
+#OLLAMA_URL = "http://localhost:11434/api/generate"
 #MODEL_NAME = "codellama:34b"
+#MODEL_NAME = "codellama:13b"
 MODEL_NAME = "codellama:7b"
+
+# Retry behavior for suggested score requests: change these values as needed
+SUGGESTED_SCORE_RETRY_LIMIT = 3  # number of attempts to try when a blank/invalid score is received
+SUGGESTED_SCORE_RETRY_SLEEP = 1  # seconds to wait between retries
 
 
 def test_model():
@@ -130,8 +135,12 @@ def get_suggested_score(priv_type: str, priv_name: str):
     The model is instructed to return a CSV with the header exactly:
     suggested_privilege_score
 
-    Returns an integer score or an empty string on failure/invalid value.
+    Returns an integer score or -1 on failure/invalid value.
+
+    Retries the request up to SUGGESTED_SCORE_RETRY_LIMIT times if a blank/invalid score is returned.
     """
+
+    import re
 
     prompt = f"""
 You are an expert in Microsoft Graph API permissions.
@@ -150,47 +159,64 @@ Privilege Name: {priv_name}
 Provide the CSV now.
 """
 
-    payload = {"model": MODEL_NAME, "prompt": prompt, "stream": False, "temperature": 0.1}
-    r = requests.post(OLLAMA_URL, json=payload, timeout=120)
-    r.raise_for_status()
-    text = r.json().get("response", "").strip()
-
-    # strip optional code fences
-    if text.startswith("```") and text.endswith("```"):
-        text = text.strip("`\n ")
-
-    # Parse CSV output robustly
-    try:
-        reader = csv.reader(io.StringIO(text))
-        for row in reader:
-            if not row:
-                continue
-            if row[0].lower().strip().startswith("suggested"):
-                continue
-            first = row[0].strip()
-            try:
-                score = int(first)
-                if 1 <= score <= 20:
-                    return score
-                else:
-                    return ""
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    # Fallback: search for an integer in the text
-    import re
-    m = re.search(r"\\b(\\d{1,2})\\b", text)
-    if m:
+    for attempt in range(1, SUGGESTED_SCORE_RETRY_LIMIT + 1):
         try:
-            score = int(m.group(1))
-            if 1 <= score <= 20:
-                return score
-        except Exception:
-            pass
+            payload = {"model": MODEL_NAME, "prompt": prompt, "stream": False, "temperature": 0.1}
+            r = requests.post(OLLAMA_URL, json=payload, timeout=120)
+            r.raise_for_status()
+            text = r.json().get("response", "").strip()
 
-    return ""
+            # strip optional code fences
+            if text.startswith("```") and text.endswith("```"):
+                text = text.strip("`\n ")
+
+            # Parse CSV output robustly
+            try:
+                reader = csv.reader(io.StringIO(text))
+                for row in reader:
+                    if not row:
+                        continue
+                    if row[0].lower().strip().startswith("suggested"):
+                        continue
+                    first = row[0].strip()
+                    try:
+                        score = int(first)
+                        if 1 <= score <= 20:
+                            return score
+                        else:
+                            # invalid numeric value
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            # Fallback: search for an integer in the text
+            m = re.search(r"\\b(\\d{1,2})\\b", text)
+            if m:
+                try:
+                    score = int(m.group(1))
+                    if 1 <= score <= 20:
+                        return score
+                except Exception:
+                    pass
+
+            # If we get here, no valid score was parsed
+            if attempt < SUGGESTED_SCORE_RETRY_LIMIT:
+                print(f"⚠️ No valid suggested score received for {priv_type}/{priv_name} (attempt {attempt}). Retrying...")
+                time.sleep(SUGGESTED_SCORE_RETRY_SLEEP)
+            else:
+                print(f"⚠️ No valid suggested score received for {priv_type}/{priv_name} after {attempt} attempts. Giving up.")
+
+        except Exception as e:
+            # network/model error — retry if attempts remain
+            if attempt < SUGGESTED_SCORE_RETRY_LIMIT:
+                print(f"⚠️ Error fetching suggested score for {priv_type}/{priv_name} (attempt {attempt}): {e}. Retrying...")
+                time.sleep(SUGGESTED_SCORE_RETRY_SLEEP)
+            else:
+                print(f"⚠️ Error fetching suggested score for {priv_type}/{priv_name} after {attempt} attempts: {e}. Giving up.")
+
+    return -1
 
 
 
@@ -238,7 +264,7 @@ def process_csv(input_csv: str, output_csv: str):
         try:
             score = get_suggested_score(priv_type, priv_name)
         except Exception as e:
-            score = ""
+            score = -1
 
         suggested_scores.append(score)
         extended_descriptions.append(ext_desc)
@@ -274,4 +300,4 @@ def process_csv(input_csv: str, output_csv: str):
 
 if __name__ == "__main__":
     process_csv("ms-graph-api_privilege-scraper/graph_permissions_test.csv", 
-                "ms-graph-api_privilege-scraper/graph-privileges_extended-desc_two-pass-sample.csv")
+                "ms-graph-api_privilege-scraper/graph-privileges_extended-desc_two-pass.csv")
